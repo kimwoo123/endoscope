@@ -72,6 +72,8 @@
   .role.user { color: #1a56db; }
   .role.assistant { color: #057a55; }
   .time { color: #9ca3af; font-size: 11px; font-weight: 400; margin-left: 8px; }
+  .tok { color: #6b7280; font-size: 11px; font-weight: 400; margin-left: 8px;
+         background: #f3f4f6; border-radius: 6px; padding: 1px 6px; cursor: help; }
   .block { white-space: pre-wrap; word-break: break-word; margin: 6px 0; line-height: 1.5; }
   .block.thinking { color: #9ca3af; font-style: italic; }
   .toolgroup { border: 1px solid #e5d3b3; border-radius: 6px; margin: 8px 0;
@@ -97,6 +99,7 @@
 <script>
 async function j(u){ return (await fetch(u)).json(); }
 function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtTok(n){ return n>=1000 ? (n/1000).toFixed(n>=10000?0:1)+'k' : ''+n; }
 function shortId(id){ return (id||'').slice(0,8); }
 
 // 세션 ID 칩 HTML. 클릭하면 전체 ID를 복사하고 잠깐 ✓ 표시.
@@ -228,9 +231,15 @@ function renderMessages(messages){
       }
       return `<div class="block ${b.kind}">${esc(b.text)}</div>`;
     }).join('');
+    let tok = '';
+    if(m.tokens){
+      const t = m.tokens;
+      const tip = `출력 ${t.output} · 입력 ${t.input} · 캐시읽기 ${t.cacheRead} · 캐시생성 ${t.cacheCreate}`;
+      tok = `<span class="tok" title="${tip}">${fmtTok(t.output)} tok</span>`;
+    }
     return `<div class="msg ${m.role}">`+
            `<div class="head"><span class="role ${m.role}">${role}</span>`+
-           `<span class="time">${m.time}</span></div>${blocks}</div>`;
+           `<span class="time">${m.time}</span>${tok}</div>${blocks}</div>`;
   }).join('');
 }
 

@@ -124,10 +124,26 @@ func listSessions(project string) []sessionInfo {
 	return out
 }
 
+type tokenInfo struct {
+	Output      int `json:"output"`      // 그 턴이 생성한 토큰 (메인 지표)
+	Input       int `json:"input"`       // 신규(비캐시) 입력
+	CacheRead   int `json:"cacheRead"`   // 캐시에서 읽은 양 (≈ 그 턴의 컨텍스트 크기)
+	CacheCreate int `json:"cacheCreate"` // 캐시에 쓴 양
+}
+
 type message struct {
-	Role   string  `json:"role"`
-	Time   string  `json:"time"`
-	Blocks []block `json:"blocks"`
+	Role   string     `json:"role"`
+	Time   string     `json:"time"`
+	Blocks []block    `json:"blocks"`
+	Tokens *tokenInfo `json:"tokens,omitempty"` // 어시스턴트 턴에만
+}
+
+// JSON 숫자는 float64로 언마샬되므로 int로 변환
+func intval(m map[string]any, k string) int {
+	if v, ok := m[k].(float64); ok {
+		return int(v)
+	}
+	return 0
 }
 
 type sessionResp struct {
@@ -148,8 +164,9 @@ func renderSession(project, file string) sessionResp {
 	// 단일 패스: 라인마다 iterBlocks를 '한 번만' 호출해 블록을 추출하고
 	// (병목 3: 이전엔 두 번 호출), 동시에 tool_use_id -> 결과 매핑을 모은다.
 	type parsedMsg struct {
-		role, ts string
-		blocks   []block
+		role, ts, id string
+		blocks       []block
+		usage        map[string]any // 그 턴의 usage (어시스턴트만, 없으면 nil)
 	}
 	var msgs []parsedMsg
 	results := map[string]string{}
@@ -160,12 +177,29 @@ func renderSession(project, file string) sessionResp {
 				results[b.ref] = strings.TrimSpace(b.Text)
 			}
 		}
-		if t := str(o["type"]); t == "user" || t == "assistant" {
-			msgs = append(msgs, parsedMsg{t, str(o["timestamp"]), bs})
+		t := str(o["type"])
+		if t != "user" && t != "assistant" {
+			continue
 		}
+		m, _ := o["message"].(map[string]any)
+		id := str(m["id"])
+		usage, _ := m["usage"].(map[string]any)
+		// 한 턴(message.id)은 content 블록별로 여러 줄에 나뉘고 같은 usage를 공유한다.
+		// 연속된 같은 id의 어시스턴트 라인을 한 메시지로 병합 → 턴당 말풍선·토큰 1개.
+		if t == "assistant" && id != "" && len(msgs) > 0 {
+			if last := &msgs[len(msgs)-1]; last.role == "assistant" && last.id == id {
+				last.blocks = append(last.blocks, bs...)
+				if last.usage == nil {
+					last.usage = usage
+				}
+				continue
+			}
+		}
+		msgs = append(msgs, parsedMsg{role: t, ts: str(o["timestamp"]), id: id, blocks: bs, usage: usage})
 	}
 
 	// 추출된 블록을 조립한다 (여기선 JSON 파싱 없음 — 결과 붙이고 비우기만).
+	tokenSeen := map[string]bool{} // 같은 message.id의 토큰은 한 번만 집계
 	for _, pm := range msgs {
 		var blocks []block
 		for _, b := range pm.blocks {
@@ -194,11 +228,17 @@ func renderSession(project, file string) sessionResp {
 			blocks = append(blocks, b)
 		}
 		if len(blocks) > 0 {
-			resp.Messages = append(resp.Messages, message{
-				Role:   pm.role,
-				Time:   fmtTime(pm.ts),
-				Blocks: blocks,
-			})
+			msg := message{Role: pm.role, Time: fmtTime(pm.ts), Blocks: blocks}
+			if pm.role == "assistant" && pm.usage != nil && !(pm.id != "" && tokenSeen[pm.id]) {
+				tokenSeen[pm.id] = true
+				msg.Tokens = &tokenInfo{
+					Output:      intval(pm.usage, "output_tokens"),
+					Input:       intval(pm.usage, "input_tokens"),
+					CacheRead:   intval(pm.usage, "cache_read_input_tokens"),
+					CacheCreate: intval(pm.usage, "cache_creation_input_tokens"),
+				}
+			}
+			resp.Messages = append(resp.Messages, msg)
 		}
 	}
 	resp.Title = sessionTitle(lines)
