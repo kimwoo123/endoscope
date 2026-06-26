@@ -41,6 +41,8 @@ type WorktreeView struct {
 
 type SessionView struct {
 	ID           string `json:"id"`
+	Project      string `json:"project"` // viewer 딥링크 좌표
+	File         string `json:"file"`    // viewer 딥링크 좌표
 	Title        string `json:"title"`
 	Prompt       string `json:"prompt"`
 	State        string `json:"state"` // waiting | running | idle
@@ -163,6 +165,8 @@ func sessionView(cfg Config, s *session, wtOpen bool) SessionView {
 	}
 	return SessionView{
 		ID:           s.ID,
+		Project:      s.Project,
+		File:         s.File,
 		Title:        s.Title,
 		Prompt:       s.Prompt,
 		State:        state,

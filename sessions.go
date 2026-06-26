@@ -12,14 +12,16 @@ import (
 
 // session is the distilled state of one Claude Code session jsonl file.
 type session struct {
-	ID        string
-	Cwd       string
-	Branch    string
-	Title     string // first user prompt, cropped — "what this session was doing"
-	Prompt    string // last user prompt
-	Version   string
-	LastRole  string // user | assistant — role of the latest main-chain entry
-	LastTS    time.Time
+	ID       string
+	Project  string // encoded projects/ dir name — viewer 딥링크용
+	File     string // jsonl 파일명 — viewer 딥링크용
+	Cwd      string
+	Branch   string
+	Title    string // first user prompt, cropped — "what this session was doing"
+	Prompt   string // last user prompt
+	Version  string
+	LastRole string // user | assistant — role of the latest main-chain entry
+	LastTS   time.Time
 }
 
 type rawEntry struct {
@@ -103,7 +105,11 @@ func parseSession(path string) *session {
 	if err != nil {
 		return nil
 	}
-	s := &session{ID: trimExt(filepath.Base(path))}
+	s := &session{
+		ID:      trimExt(filepath.Base(path)),
+		File:    filepath.Base(path),
+		Project: filepath.Base(filepath.Dir(path)),
+	}
 	var firstUser string // first human-authored prompt — used as the title
 	for _, line := range bytes.Split(data, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)

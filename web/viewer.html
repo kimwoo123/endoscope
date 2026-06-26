@@ -123,13 +123,27 @@ let activeId = null; // 기본 클릭의 대상이 되는 활성 패널
 let curPid = null;   // 사이드바에서 선택된 프로젝트
 let seq = 0;         // 패널 id 생성기
 
+// 보드에서 /viewer?project=&file= 로 넘어온 경우 그 세션을 바로 연다.
+function deepLink(){
+  const p = new URLSearchParams(location.search);
+  const pid = p.get('project'), file = p.get('file');
+  return (pid && file) ? {pid, file} : null;
+}
+
 // ── 프로젝트 / 세션 목록 ─────────────────────────────────────────
 async function loadProjects(){
   const projs = await j('/api/projects');
   const sel = document.getElementById('project');
   sel.innerHTML = projs.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
   sel.onchange = ()=>loadSessions(sel.value);
-  if(projs.length) loadSessions(projs[0].id);
+  const dl = deepLink();
+  if(dl){                       // 딥링크: 해당 프로젝트 선택 + 세션을 첫 패널에 열기
+    sel.value = dl.pid;
+    await loadSessions(dl.pid);
+    addPane(dl.pid, dl.file);
+  } else if(projs.length){
+    loadSessions(projs[0].id);
+  }
 }
 
 async function loadSessions(pid){
@@ -245,7 +259,7 @@ function renderMessages(messages){
 
 function setTitleText(el, pane){
   el.textContent = (pane.label || pane.title) || '(제목 없음)';
-  el.title = pane.label ? 'ai-title: '+pane.title : '클릭해서 라벨 달기';
+  el.title = pane.label ? '원래 제목: '+pane.title : '클릭해서 라벨 달기';
 }
 
 // keepScroll=true 면 자동 갱신: 읽던 위치를 유지하고, 맨 아래를 보고 있었으면 따라 내려간다
@@ -274,8 +288,8 @@ async function refreshPane(pane, keepScroll){
 }
 
 // ── 라벨 편집 (패널별) ───────────────────────────────────────────
-// 제목 클릭 → 내 라벨 편집. ai-title은 건드리지 않고 별도 파일에 저장된다.
-// Enter 저장 (비우면 라벨 제거 → ai-title 표시로 복귀) / Esc·포커스아웃 취소.
+// 제목 클릭 → 내 라벨 편집. 원본 세션 파일은 건드리지 않고 별도 파일에 저장된다.
+// Enter 저장 (비우면 라벨 제거 → 원래 제목 표시로 복귀) / Esc·포커스아웃 취소.
 function editLabel(ev, id){
   const pane = panes.find(p=>p.id===id);
   const bar = ev.currentTarget;            // .pane-title
@@ -283,7 +297,7 @@ function editLabel(ev, id){
   const labelEl = bar.querySelector('.label-text');
   const inp = document.createElement('input');
   inp.value = pane.label || '';
-  inp.placeholder = pane.title;            // 원래 제목(ai-title)을 힌트로
+  inp.placeholder = pane.title;            // 원래 제목을 힌트로
   labelEl.replaceWith(inp);
   inp.focus(); inp.select();
   let finished = false;

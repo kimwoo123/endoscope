@@ -71,7 +71,17 @@ func sessionID(lines []map[string]any) string {
 }
 
 func sessionTitle(lines []map[string]any) string {
-	// ai-title은 갱신될 때마다 라인이 추가되므로 마지막 것이 최신이다
+	// 제목은 항상 첫 사용자 메시지를 기준으로 한다 (보드와 동일한 기준).
+	// titleFromText로 줄여 보드/뷰어가 같은 형태의 제목을 보여준다.
+	for _, o := range lines {
+		if o["type"] == "user" {
+			if t := firstUserText(o); t != "" {
+				return titleFromText(t)
+			}
+		}
+	}
+	// 사용자 텍스트가 전혀 없을 때만 Claude가 붙인 ai-title로 폴백.
+	// (ai-title은 갱신될 때마다 라인이 추가되므로 마지막 것이 최신)
 	title := ""
 	for _, o := range lines {
 		if o["type"] == "ai-title" {
@@ -82,13 +92,6 @@ func sessionTitle(lines []map[string]any) string {
 	}
 	if title != "" {
 		return title
-	}
-	for _, o := range lines {
-		if o["type"] == "user" {
-			if t := firstUserText(o); t != "" {
-				return truncRunes(t, 60)
-			}
-		}
 	}
 	return "(제목 없음)"
 }

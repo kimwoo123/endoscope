@@ -46,6 +46,8 @@
   .st { font-size:12px; white-space:nowrap; width:84px; }
   .st.waiting { color:var(--yellow); } .st.running { color:var(--green); } .st.idle { color:var(--gray); }
   .stitle { font-weight:600; }
+  .stitle a { color:inherit; text-decoration:none; }
+  .stitle a:hover { color:var(--blue); text-decoration:underline; }
   .sprompt { color:var(--mut); font-size:12px; overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap; max-width:46vw; }
   .sage { color:var(--gray); font-size:11px; margin-left:auto; white-space:nowrap; }
@@ -149,9 +151,14 @@ function render(state) {
       }
       for (const s of sessions) {
         const st = STATE[s.state] || STATE.idle;
+        // 제목 클릭 → 새 탭에서 해당 세션 대화 뷰어 열기 (보드는 켜둔 채)
+        const titleInner = esc(s.title) || '<span style="color:var(--gray)">제목 없음</span>';
+        const title = (s.project && s.file)
+          ? `<a href="/viewer?project=${encodeURIComponent(s.project)}&file=${encodeURIComponent(s.file)}" target="_blank" title="대화 내용 보기">${titleInner}</a>`
+          : titleInner;
         wtHtml += `<div class="sess">
           <span class="st ${st.cls}">${st.label}</span>
-          <span class="stitle">${esc(s.title) || '<span style="color:var(--gray)">제목 없음</span>'}</span>
+          <span class="stitle">${title}</span>
           <span class="sprompt">${esc(s.prompt)}</span>
           <span class="sage">${ago(s.lastActivity)}</span>
         </div>`;
