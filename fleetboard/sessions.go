@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,7 +15,7 @@ type session struct {
 	ID        string
 	Cwd       string
 	Branch    string
-	Title     string // aiTitle — "what this session was doing"
+	Title     string // first user prompt, cropped — "what this session was doing"
 	Prompt    string // last user prompt
 	Version   string
 	LastRole  string // user | assistant — role of the latest main-chain entry
@@ -23,7 +24,6 @@ type session struct {
 
 type rawEntry struct {
 	Type        string          `json:"type"`
-	AiTitle     string          `json:"aiTitle"`
 	LastPrompt  string          `json:"lastPrompt"`
 	Timestamp   string          `json:"timestamp"`
 	Cwd         string          `json:"cwd"`
@@ -104,6 +104,7 @@ func parseSession(path string) *session {
 		return nil
 	}
 	s := &session{ID: trimExt(filepath.Base(path))}
+	var firstUser string // first human-authored prompt — used as the title
 	for _, line := range bytes.Split(data, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
@@ -114,10 +115,6 @@ func parseSession(path string) *session {
 			continue
 		}
 		switch e.Type {
-		case "ai-title":
-			if e.AiTitle != "" {
-				s.Title = e.AiTitle
-			}
 		case "last-prompt":
 			if e.LastPrompt != "" {
 				s.Prompt = e.LastPrompt
@@ -125,6 +122,11 @@ func parseSession(path string) *session {
 		case "user", "assistant":
 			if e.IsSidechain {
 				continue // subagent traffic, not the user-facing turn
+			}
+			if e.Type == "user" && firstUser == "" {
+				if txt := meaningfulUserText(e.Message); txt != "" {
+					firstUser = txt
+				}
 			}
 			ts := parseTS(e.Timestamp)
 			if ts.IsZero() || !ts.After(s.LastTS) {
@@ -145,6 +147,76 @@ func parseSession(path string) *session {
 	}
 	if s.LastTS.IsZero() {
 		return nil
+	}
+	// Title is always the first human-authored prompt, cropped to one line.
+	if firstUser != "" {
+		s.Title = titleFromText(firstUser)
+	}
+	return s
+}
+
+// meaningfulUserText extracts the first human-authored text from a user
+// message, skipping harness-injected content (IDE events, slash commands,
+// system reminders) and tool-result-only turns.
+func meaningfulUserText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(raw, &m) != nil {
+		return ""
+	}
+	// content is either a plain string or an array of typed blocks. A single
+	// user turn can carry several text blocks (e.g. an injected <ide_selection>
+	// block followed by the real prompt), so skip noise and take the first
+	// genuine text rather than bailing on the first block.
+	var str string
+	if json.Unmarshal(m.Content, &str) == nil {
+		if str = strings.TrimSpace(str); str != "" && !isInjected(str) {
+			return str
+		}
+		return ""
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(m.Content, &blocks) != nil {
+		return ""
+	}
+	for _, b := range blocks {
+		if b.Type != "text" {
+			continue
+		}
+		if t := strings.TrimSpace(b.Text); t != "" && !isInjected(t) {
+			return t
+		}
+	}
+	return ""
+}
+
+// isInjected reports whether text is harness-injected noise rather than a
+// human instruction.
+func isInjected(s string) bool {
+	for _, p := range []string{
+		"<ide_", "<command-", "<system-reminder>", "<local-command",
+		"<user-", "<bash-", "Caveat:",
+	} {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// titleFromText condenses arbitrary message text into a one-line title.
+func titleFromText(s string) string {
+	s = strings.Join(strings.Fields(s), " ") // collapse newlines/runs of spaces
+	const max = 80
+	if r := []rune(s); len(r) > max {
+		return strings.TrimSpace(string(r[:max])) + "…"
 	}
 	return s
 }
