@@ -136,11 +136,14 @@ func build(cfg Config, ado *adoClient) StateView {
 				VSCodeURL: "vscode://file/" + w.Path,
 			}
 			if ado != nil && isADO && w.Branch != "" && w.Branch != "(detached)" {
-				wv.Pipeline = ado.latestBuild(aOrg, aProj, aRepo, w.Branch)
-				wv.PR = ado.activePR(aOrg, aProj, aRepo, w.Branch)
+				// 캐시에서만 읽어 요청을 블로킹하지 않는다. 빈 값이면 다음 폴링에
+				// 채워진다. track()으로 백그라운드 병렬 갱신 대상에 등록.
+				wv.Pipeline = ado.cachedBuild(aOrg, aProj, aRepo, w.Branch)
+				wv.PR = ado.cachedActivePR(aOrg, aProj, aRepo, w.Branch)
 				if w.Branch != cfg.BaseBranch { // base 자신은 머지 판정 무의미
-					wv.Merged = ado.mergedPR(aOrg, aProj, aRepo, w.Branch, cfg.BaseBranch)
+					wv.Merged = ado.cachedMergedPR(aOrg, aProj, aRepo, w.Branch, cfg.BaseBranch)
 				}
+				ado.track(aOrg, aProj, aRepo, w.Branch, cfg.BaseBranch)
 			}
 			var wtLatest time.Time // 이 워크트리의 가장 최근 세션 활동
 			for _, s := range ss {
@@ -189,7 +192,7 @@ func isBoardWorktree(cfg Config, ado *adoClient, path string) bool {
 	if path == "" {
 		return false
 	}
-	st := build(cfg, ado)
+	st := build(cfg, nil) // 경로 검증만 — ADO 조회 불필요
 	for _, repo := range st.Repos {
 		for _, wt := range repo.Worktrees {
 			if wt.Path == path {
@@ -203,13 +206,16 @@ func isBoardWorktree(cfg Config, ado *adoClient, path string) bool {
 func sessionView(cfg Config, s *session, wtOpen bool) SessionView {
 	age := time.Since(s.LastTS)
 	state := "idle"
+	// waiting/recent는 VSCode-open을 요구하지 않는다 — 터미널에서 돌린 세션도
+	// "Claude가 끝내고 내 입력을 기다리는" 상태로 잡아야 하기 때문. open은 표시(● VSCode)·
+	// 정렬 가점용으로만 쓴다.
 	switch {
 	case age < time.Duration(cfg.RunningSec)*time.Second:
 		state = "running"
-	case wtOpen && s.LastRole == "assistant" && age < time.Duration(cfg.WaitingMin)*time.Minute:
-		state = "waiting" // turn ended within minutes, VSCode open → 지금 당신 차례
-	case wtOpen && s.LastRole == "assistant" && age < time.Duration(cfg.WaitingHrs)*time.Hour:
-		state = "recent" // assistant-ended today, but a while ago → 우선순위 낮은 대기
+	case s.LastRole == "assistant" && age < time.Duration(cfg.WaitingMin)*time.Minute:
+		state = "waiting" // Claude가 막 응답을 끝냄 → 지금 당신 차례
+	case s.LastRole == "assistant" && age < time.Duration(cfg.WaitingHrs)*time.Hour:
+		state = "recent" // assistant로 끝났지만 한참 전 → 우선순위 낮은 대기
 	}
 	return SessionView{
 		ID:           s.ID,

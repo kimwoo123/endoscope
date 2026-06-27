@@ -62,6 +62,7 @@ func main() {
 	var ado *adoClient
 	if cfg.adoConfigured() {
 		ado = newADO(cfg)
+		go ado.refreshLoop() // ADO 조회를 요청 경로 밖에서 병렬로 갱신 (첫 로드 비차단)
 	}
 
 	if err := startWatcher(); err != nil {

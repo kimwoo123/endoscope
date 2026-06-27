@@ -38,6 +38,9 @@ type adoClient struct {
 	bCache  map[string]adoCacheEntry // org/project/repo/branch -> build
 	pCache  map[string]adoCacheEntry // org/project/repo/branch -> active PR
 	mCache  map[string]adoCacheEntry // org/project/repo/branch->base -> merged PR
+
+	targets map[string]adoTarget // 보드가 본 조회 대상 — 백그라운드 갱신용
+	nudge   chan struct{}        // 새 대상 등장 시 즉시 갱신 신호(버퍼 1)
 }
 
 type adoCacheEntry struct {
@@ -47,6 +50,13 @@ type adoCacheEntry struct {
 	merged *pullRequest
 }
 
+// adoTarget은 한 워크트리의 ADO 좌표. 요청 경로(build)가 등록하고,
+// refreshLoop이 이 목록을 병렬로 갱신해 캐시를 채운다.
+type adoTarget struct {
+	org, project, repo, branch, base string
+	wantMerged                       bool // branch != base 일 때만 머지 조회
+}
+
 func newADO(cfg Config) *adoClient {
 	return &adoClient{
 		auth:    "Basic " + base64.StdEncoding.EncodeToString([]byte(":"+cfg.ADOPat)),
@@ -54,6 +64,8 @@ func newADO(cfg Config) *adoClient {
 		bCache:  map[string]adoCacheEntry{},
 		pCache:  map[string]adoCacheEntry{},
 		mCache:  map[string]adoCacheEntry{},
+		targets: map[string]adoTarget{},
+		nudge:   make(chan struct{}, 1),
 	}
 }
 
@@ -221,4 +233,94 @@ func (a *adoClient) mergedPR(org, project, repo, branch, base string) *pullReque
 	a.mCache[key] = adoCacheEntry{at: time.Now(), merged: pr}
 	a.mu.Unlock()
 	return pr
+}
+
+// ---- 비차단 캐시 읽기 + 백그라운드 병렬 갱신 ----
+//
+// 요청 경로(build)는 아래 cached* 로 캐시에서만 읽어 절대 HTTP를 기다리지 않는다.
+// 동시에 track()으로 좌표를 등록하면 refreshLoop이 그 대상들을 병렬로 갱신해
+// 캐시를 채운다 → 첫 로드는 즉시(뱃지 없이) 뜨고, 뱃지는 다음 폴링에 나타난다.
+
+func (a *adoClient) cachedBuild(org, project, repo, branch string) *pipeline {
+	key := org + "/" + project + "/" + repo + "/" + branch
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.bCache[key].pipe
+}
+
+func (a *adoClient) cachedActivePR(org, project, repo, branch string) *pullRequest {
+	key := org + "/" + project + "/" + repo + "/" + branch
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.pCache[key].pr
+}
+
+func (a *adoClient) cachedMergedPR(org, project, repo, branch, base string) *pullRequest {
+	key := org + "/" + project + "/" + repo + "/" + branch + "->" + base
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.mCache[key].merged
+}
+
+// track registers a worktree's ADO coordinates for background refresh. A newly
+// seen target nudges the loop so its badges appear on the next poll, not 15s later.
+func (a *adoClient) track(org, project, repo, branch, base string) {
+	key := org + "/" + project + "/" + repo + "/" + branch + "->" + base
+	a.mu.Lock()
+	_, seen := a.targets[key]
+	if !seen {
+		a.targets[key] = adoTarget{org, project, repo, branch, base, branch != base}
+	}
+	a.mu.Unlock()
+	if !seen {
+		select {
+		case a.nudge <- struct{}{}:
+		default: // 이미 대기 중인 신호가 있으면 그걸로 충분
+		}
+	}
+}
+
+// refreshLoop keeps the ADO cache warm: refresh all tracked targets, then wait
+// for a tick or a nudge (new target). Started once from main().
+func (a *adoClient) refreshLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		a.refreshAll()
+		select {
+		case <-ticker.C:
+		case <-a.nudge:
+		}
+	}
+}
+
+// refreshAll fetches every tracked target concurrently (capped). The underlying
+// latestBuild/activePR/mergedPR only hit the network when their cache is stale,
+// so this is cheap once warm.
+func (a *adoClient) refreshAll() {
+	a.mu.Lock()
+	targets := make([]adoTarget, 0, len(a.targets))
+	for _, t := range a.targets {
+		targets = append(targets, t)
+	}
+	a.mu.Unlock()
+
+	const maxConcurrent = 8
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	for _, t := range targets {
+		t := t
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			a.latestBuild(t.org, t.project, t.repo, t.branch)
+			a.activePR(t.org, t.project, t.repo, t.branch)
+			if t.wantMerged {
+				a.mergedPR(t.org, t.project, t.repo, t.branch, t.base)
+			}
+		}()
+	}
+	wg.Wait()
 }

@@ -70,6 +70,7 @@
   <span class="spacer"></span>
   <div class="seg" id="seg">
     <button class="seg-btn" data-mode="active">활성만</button>
+    <button class="seg-btn" data-mode="recent">최근까지<span class="seg-count" id="recentCount"></span></button>
     <button class="seg-btn" data-mode="all">전체<span class="seg-count" id="idleCount"></span></button>
   </div>
   <span class="meta" id="updated"></span>
@@ -122,24 +123,29 @@ function render(state) {
   document.getElementById('updated').textContent = '갱신 ' + ago(state.generatedAt);
 
   const board = document.getElementById('board');
+  const recentCount = document.getElementById('recentCount');
   const idleCount = document.getElementById('idleCount');
   if (!state.repos || !state.repos.length) {
+    recentCount.textContent = '';
     idleCount.textContent = '';
     board.innerHTML = `<div class="empty">표시할 세션이 없어요.<br>
       최근 활동이 FLEETBOARD_MAX_AGE_HOURS 안에 있는지 확인하세요.</div>`;
     return;
   }
   let html = '';
-  let hidden = 0;
+  let recentN = 0, idleN = 0; // 전체 기준 단계별 세션 수 (필터와 무관하게 집계)
   for (const repo of state.repos) {
     let wtHtml = '';
     for (const w of repo.worktrees) {
       let sessions = w.sessions || [];
-      if (!showIdle) {
-        const before = sessions.length;
-        // '활성만' = 지금 내 액션이 필요한 세션만 (입력대기·작업중). 최근·idle은 숨김.
-        sessions = sessions.filter(s => s.state === 'waiting' || s.state === 'running');
-        hidden += before - sessions.length;
+      for (const s of sessions) {
+        if (s.state === 'recent') recentN++;
+        else if (s.state === 'idle') idleN++;
+      }
+      if (mode !== 'all') {
+        // active = 입력대기·작업중만 / recent = +최근 (idle만 숨김)
+        sessions = sessions.filter(s =>
+          s.state === 'waiting' || s.state === 'running' || (mode === 'recent' && s.state === 'recent'));
         if (sessions.length === 0) continue; // 보일 세션이 없으면 worktree 자체를 숨김
       }
       const openPill = w.open ? '<span class="open-pill">● VSCode</span>' : '';
@@ -179,29 +185,36 @@ function render(state) {
     html += `<div class="repo"><h2><b>${esc(repo.name)}</b> <span style="color:var(--gray)">${esc(repo.path)}</span></h2>${wtHtml}</div>`;
   }
 
-  idleCount.textContent = hidden ? ` (${hidden})` : '';
+  recentCount.textContent = recentN ? ` (${recentN})` : '';
+  idleCount.textContent = idleN ? ` (${idleN})` : '';
   if (!html) {
-    board.innerHTML = `<div class="empty">활성 세션(입력대기 · 작업중)이 없어요.<br>
-      최근·idle ${hidden}개가 숨겨져 있습니다 — 위 “전체”를 눌러보세요.</div>`;
+    board.innerHTML = `<div class="empty">${mode === 'active' ? '활성(입력대기·작업중)' : '최근'} 세션이 없어요.<br>
+      최근 ${recentN} · idle ${idleN}개가 있습니다 — 위 “최근까지”·“전체”로 펼쳐보세요.</div>`;
     return;
   }
   board.innerHTML = html;
 }
 
-// 활성/전체 세그먼트 토글 — 기본은 '활성만'(최근·idle 숨김), 선택은 localStorage에 기억
-const SHOW_IDLE_KEY = 'fleetboard.showIdle';
-let showIdle = localStorage.getItem(SHOW_IDLE_KEY) === '1';
+// 활성만 | 최근까지 | 전체 3단 필터 — 선택은 localStorage에 기억
+//   active = 입력대기·작업중 / recent = +최근 / all = +idle(전부)
+const FILTER_KEY = 'fleetboard.filter';
+function loadMode() {
+  const m = localStorage.getItem(FILTER_KEY);
+  if (m === 'active' || m === 'recent' || m === 'all') return m;
+  // 구버전(showIdle) 마이그레이션: 켜져 있었으면 전체, 아니면 활성만
+  return localStorage.getItem('fleetboard.showIdle') === '1' ? 'all' : 'active';
+}
+let mode = loadMode();
 let lastState = null;
 const seg = document.getElementById('seg');
 function syncSeg() {
-  seg.querySelectorAll('.seg-btn').forEach(b =>
-    b.classList.toggle('on', (b.dataset.mode === 'all') === showIdle));
+  seg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
 }
 seg.addEventListener('click', e => {
   const btn = e.target.closest('.seg-btn');
   if (!btn) return;
-  showIdle = btn.dataset.mode === 'all';
-  localStorage.setItem(SHOW_IDLE_KEY, showIdle ? '1' : '0');
+  mode = btn.dataset.mode;
+  localStorage.setItem(FILTER_KEY, mode);
   syncSeg();
   if (lastState) render(lastState); // 다음 폴링을 기다리지 않고 즉시 반영
 });
