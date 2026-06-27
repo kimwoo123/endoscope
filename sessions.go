@@ -47,6 +47,57 @@ type sessCacheEntry struct {
 	sess  *session
 }
 
+// 첫 사용자 메시지(제목)는 한 번 쓰이면 불변이라, 파일이 자라도(mtime 변경) 무효화하지
+// 않고 path를 키로 디스크에 영속 캐시한다 → 큰 파일도 제목 때문에 통째로 읽지 않는다.
+var (
+	titleCacheMu    sync.Mutex
+	titleCache      = map[string]string{}
+	titleCacheDirty bool
+	titleCacheFile  string // main()에서 cfg.ClaudeHome 기준으로 채운다
+)
+
+// loadTitleCache는 시작 시 디스크의 제목 캐시를 메모리로 읽어들인다(없으면 무시).
+func loadTitleCache() {
+	if titleCacheFile == "" {
+		return
+	}
+	data, err := os.ReadFile(titleCacheFile)
+	if err != nil {
+		return
+	}
+	var m map[string]string
+	if json.Unmarshal(data, &m) != nil || m == nil {
+		return
+	}
+	titleCacheMu.Lock()
+	titleCache = m
+	titleCacheMu.Unlock()
+}
+
+// saveTitleCache는 새 제목이 추가됐을 때만 디스크에 원자적으로 쓴다.
+func saveTitleCache() {
+	titleCacheMu.Lock()
+	if !titleCacheDirty || titleCacheFile == "" {
+		titleCacheMu.Unlock()
+		return
+	}
+	snap := make(map[string]string, len(titleCache))
+	for k, v := range titleCache {
+		snap[k] = v
+	}
+	titleCacheDirty = false
+	titleCacheMu.Unlock()
+
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return
+	}
+	tmp := titleCacheFile + ".tmp"
+	if os.WriteFile(tmp, data, 0o644) == nil {
+		os.Rename(tmp, titleCacheFile)
+	}
+}
+
 // loadSessions scans CLAUDE_HOME/projects/*/*.jsonl and returns one distilled
 // session per file that has been active within MaxAgeHours.
 func loadSessions(cfg Config) []*session {
@@ -70,6 +121,12 @@ func loadSessions(cfg Config) []*session {
 			if f.IsDir() || filepath.Ext(f.Name()) != ".jsonl" {
 				continue
 			}
+			// mtime 사전 필터: 마지막 대화 시각은 파일 mtime을 넘을 수 없으므로,
+			// mtime이 cutoff보다 오래면 파싱(=파일 읽기) 없이 건너뛴다.
+			info, err := f.Info()
+			if err != nil || info.ModTime().Before(cutoff) {
+				continue
+			}
 			path := filepath.Join(root, d.Name(), f.Name())
 			s := parseSessionCached(path)
 			if s == nil || s.LastTS.Before(cutoff) || s.Cwd == "" {
@@ -78,6 +135,7 @@ func loadSessions(cfg Config) []*session {
 			out = append(out, s)
 		}
 	}
+	saveTitleCache() // 이번 스캔에서 새로 계산된 제목이 있으면 디스크에 영속
 	return out
 }
 
@@ -93,29 +151,127 @@ func parseSessionCached(path string) *session {
 	}
 	sessCacheMu.Unlock()
 
-	s := parseSession(path)
+	s := parseSession(path, info.Size())
 	sessCacheMu.Lock()
 	sessCache[path] = sessCacheEntry{mtime: info.ModTime(), size: info.Size(), sess: s}
 	sessCacheMu.Unlock()
 	return s
 }
 
-func parseSession(path string) *session {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
+// parseSession distills one session without reading the whole file: the title
+// (immutable) comes from a disk-cached head read, and the mutable last-* fields
+// from an adaptive tail read. A 20MB file thus costs ~head(once)+tail, not 20MB.
+func parseSession(path string, size int64) *session {
 	s := &session{
 		ID:      trimExt(filepath.Base(path)),
 		File:    filepath.Base(path),
 		Project: filepath.Base(filepath.Dir(path)),
 	}
-	var firstUser string // first human-authored prompt — used as the title
-	for _, line := range bytes.Split(data, []byte{'\n'}) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
+	s.Title = headTitle(path, size) // 불변 — 디스크 캐시 우선
+	parseTail(path, size, s)        // 가변 — 꼬리만 읽어 LastTS/Role/Prompt/Cwd/Branch 채움
+	if s.LastTS.IsZero() {
+		return nil
+	}
+	return s
+}
+
+// headTitle returns the first human-authored prompt (cropped). It's immutable
+// per file, so it's cached permanently on disk keyed by path.
+func headTitle(path string, size int64) string {
+	titleCacheMu.Lock()
+	if t, ok := titleCache[path]; ok {
+		titleCacheMu.Unlock()
+		return t
+	}
+	titleCacheMu.Unlock()
+
+	t := readHeadTitle(path, size)
+
+	titleCacheMu.Lock()
+	titleCache[path] = t
+	titleCacheDirty = true
+	titleCacheMu.Unlock()
+	return t
+}
+
+// readHeadTitle reads only the head of the file, growing the window until it
+// finds the first meaningful user text (almost always near the very top).
+func readHeadTitle(path string, size int64) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	const maxHead = 1 << 20 // 1MB 상한 — 이 안에 첫 user가 없으면 포기
+	window := int64(128 * 1024)
+	for {
+		whole := window >= size
+		if whole {
+			window = size
+		}
+		buf := make([]byte, window)
+		n, _ := f.ReadAt(buf, 0)
+		lines := splitLines(buf[:n], false, !whole) // 끝까지 안 읽었으면 마지막(미완) 줄 버림
+		if t := firstUserTitle(lines); t != "" {
+			return t
+		}
+		if whole || window >= maxHead {
+			return ""
+		}
+		window *= 2
+	}
+}
+
+// firstUserTitle returns the title from the first meaningful, non-sidechain
+// user message among the given lines, or "" if none.
+func firstUserTitle(lines [][]byte) string {
+	for _, line := range lines {
+		var e rawEntry
+		if json.Unmarshal(line, &e) != nil {
 			continue
 		}
+		if e.Type != "user" || e.IsSidechain {
+			continue
+		}
+		if txt := meaningfulUserText(e.Message); txt != "" {
+			return titleFromText(txt)
+		}
+	}
+	return ""
+}
+
+// parseTail reads only the tail of the file to fill the mutable fields. The
+// window grows until it captures the latest user/assistant entry (entries can
+// exceed 1MB), since that carries LastTS/Cwd/Branch.
+func parseTail(path string, size int64, s *session) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	window := int64(256 * 1024)
+	for {
+		whole := window >= size
+		if whole {
+			window = size
+		}
+		off := size - window
+		buf := make([]byte, window)
+		n, _ := f.ReadAt(buf, off)
+		lines := splitLines(buf[:n], !whole, false) // 시작이 줄 중간이면 첫(미완) 줄 버림
+		applyTail(lines, s)
+		if !s.LastTS.IsZero() || whole {
+			return
+		}
+		window *= 2 // 마지막 user/assistant를 못 잡았으면 윈도우 확대
+	}
+}
+
+// applyTail folds the tail lines into s using the same rules as the original
+// chronological scan. It's monotonic (only newer ts wins), so re-applying on a
+// grown, overlapping window is safe.
+func applyTail(lines [][]byte, s *session) {
+	for _, line := range lines {
 		var e rawEntry
 		if json.Unmarshal(line, &e) != nil {
 			continue
@@ -128,11 +284,6 @@ func parseSession(path string) *session {
 		case "user", "assistant":
 			if e.IsSidechain {
 				continue // subagent traffic, not the user-facing turn
-			}
-			if e.Type == "user" && firstUser == "" {
-				if txt := meaningfulUserText(e.Message); txt != "" {
-					firstUser = txt
-				}
 			}
 			ts := parseTS(e.Timestamp)
 			if ts.IsZero() || !ts.After(s.LastTS) {
@@ -151,14 +302,25 @@ func parseSession(path string) *session {
 			}
 		}
 	}
-	if s.LastTS.IsZero() {
-		return nil
+}
+
+// splitLines splits a byte window into non-empty trimmed lines, optionally
+// dropping the first/last line when the window starts/ends mid-line.
+func splitLines(buf []byte, dropFirst, dropLast bool) [][]byte {
+	parts := bytes.Split(buf, []byte{'\n'})
+	if dropLast && len(parts) > 0 {
+		parts = parts[:len(parts)-1]
 	}
-	// Title is always the first human-authored prompt, cropped to one line.
-	if firstUser != "" {
-		s.Title = titleFromText(firstUser)
+	if dropFirst && len(parts) > 0 {
+		parts = parts[1:]
 	}
-	return s
+	out := make([][]byte, 0, len(parts))
+	for _, p := range parts {
+		if p = bytes.TrimSpace(p); len(p) > 0 {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // meaningfulUserText extracts the first human-authored text from a user

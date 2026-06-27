@@ -58,6 +58,8 @@ func main() {
 	cfg := loadConfig()
 	projectsDir = filepath.Join(cfg.ClaudeHome, "projects")
 	labelsFile = filepath.Join(cfg.ClaudeHome, "jsonl_viewer_labels.json")
+	titleCacheFile = filepath.Join(cfg.ClaudeHome, "narcissus_title_cache.json")
+	loadTitleCache() // 세션 제목(불변) 디스크 캐시 로드 → 재시작 후에도 머리 재파싱 회피
 
 	var ado *adoClient
 	if cfg.adoConfigured() {
