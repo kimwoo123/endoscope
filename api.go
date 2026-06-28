@@ -95,7 +95,7 @@ func listSessions(project string) []sessionInfo {
 	}
 	type fe struct {
 		name string
-		mt   time.Time
+		info os.FileInfo
 	}
 	var fs []fe
 	for _, e := range entries {
@@ -106,21 +106,29 @@ func listSessions(project string) []sessionInfo {
 		if err != nil {
 			continue
 		}
-		fs = append(fs, fe{e.Name(), info.ModTime()})
+		fs = append(fs, fe{e.Name(), info})
 	}
-	sort.Slice(fs, func(i, j int) bool { return fs[i].mt.After(fs[j].mt) })
+	sort.Slice(fs, func(i, j int) bool { return fs[i].info.ModTime().After(fs[j].info.ModTime()) })
 
 	labels := loadLabels()
 	for _, f := range fs {
-		lines := loadSession(filepath.Join(dir, f.name))
+		// 목록용 title·ID는 보드와 같은 head/tail+캐시 distillation으로 얻는다.
+		// 파일을 통째로 읽던 loadSession 호출을 제거 (큰 프로젝트 cold 로드 가속).
+		// FileInfo를 넘겨 parseSessionCached의 중복 stat도 피한다.
+		path := filepath.Join(dir, f.name)
+		title, id := "", strings.TrimSuffix(f.name, ".jsonl")
+		if s := parseSessionCached(path, f.info); s != nil {
+			title, id = s.Title, s.ID
+		}
 		out = append(out, sessionInfo{
 			File:      f.name,
-			SessionID: idOrFile(sessionID(lines), f.name),
-			Title:     sessionTitle(lines),
+			SessionID: id,
+			Title:     title,
 			Label:     labelPtr(labels, project+"/"+f.name),
-			Mtime:     f.mt.Format("01-02 15:04"),
+			Mtime:     f.info.ModTime().Format("01-02 15:04"),
 		})
 	}
+	saveTitleCache() // 새로 계산된 제목이 있으면 디스크에 영속
 	return out
 }
 

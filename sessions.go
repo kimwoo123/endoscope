@@ -128,7 +128,7 @@ func loadSessions(cfg Config) []*session {
 				continue
 			}
 			path := filepath.Join(root, d.Name(), f.Name())
-			s := parseSessionCached(path)
+			s := parseSessionCached(path, info)
 			if s == nil || s.LastTS.Before(cutoff) || s.Cwd == "" {
 				continue
 			}
@@ -139,11 +139,9 @@ func loadSessions(cfg Config) []*session {
 	return out
 }
 
-func parseSessionCached(path string) *session {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil
-	}
+// parseSessionCached는 호출부가 ReadDir에서 이미 얻은 FileInfo를 받아 중복 stat을
+// 피한다(loadSessions·listSessions 둘 다 디렉터리 엔트리에서 info를 갖고 들어온다).
+func parseSessionCached(path string, info os.FileInfo) *session {
 	sessCacheMu.Lock()
 	if e, ok := sessCache[path]; ok && e.mtime.Equal(info.ModTime()) && e.size == info.Size() {
 		sessCacheMu.Unlock()
