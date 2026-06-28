@@ -1,4 +1,4 @@
-module narcissus
+module endoscope
 
 go 1.24.4
 

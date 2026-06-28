@@ -1,4 +1,4 @@
-// narcissus — Claude 세션 통합 로컬 대시보드.
+// endoscope — Claude 세션 통합 로컬 대시보드.
 //
 // 한 바이너리·한 포트에서 두 화면을 서빙한다:
 //   /        FleetBoard — 워크트리별 Claude 세션 + Git + Azure DevOps 상태 (5초 폴링)
@@ -6,8 +6,8 @@
 //
 // 보드의 세션 행을 클릭하면 /viewer?project=&file= 로 그 세션의 대화가 열린다.
 //
-// 빌드:  go build -o narcissus .
-// 실행:  ./narcissus   (브라우저가 보드를 자동으로 연다)
+// 빌드:  go build -o endoscope .
+// 실행:  ./endoscope   (브라우저가 보드를 자동으로 연다)
 //
 // 파일 구성:
 //   main.go     — 진입점: 설정 로드, 라우팅, 서버 기동
@@ -55,7 +55,7 @@ func main() {
 	cfg := loadConfig()
 	projectsDir = filepath.Join(cfg.ClaudeHome, "projects")
 	labelsFile = filepath.Join(cfg.ClaudeHome, "jsonl_viewer_labels.json")
-	titleCacheFile = filepath.Join(cfg.ClaudeHome, "narcissus_title_cache.json")
+	titleCacheFile = filepath.Join(cfg.ClaudeHome, "endoscope_title_cache.json")
 	loadTitleCache() // 세션 제목(불변) 디스크 캐시 로드 → 재시작 후에도 머리 재파싱 회피
 
 	var ado *adoClient
@@ -136,7 +136,7 @@ func main() {
 
 	addr := "127.0.0.1:" + cfg.Port
 	url := "http://" + addr
-	fmt.Printf("narcissus → %s\n", url)
+	fmt.Printf("endoscope → %s\n", url)
 	fmt.Printf("  CLAUDE_HOME = %s\n", cfg.ClaudeHome)
 	if cfg.adoConfigured() {
 		fmt.Printf("  Azure DevOps = PAT 설정됨 (org/project/repo는 각 repo 리모트에서 자동 판별)\n")

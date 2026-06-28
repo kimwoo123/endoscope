@@ -1,5 +1,5 @@
 # 빌드 산출물
-/narcissus
+/endoscope
 
 # 로컬 시크릿/설정 (ADO_PAT 등) — 커밋 금지
 /.env
