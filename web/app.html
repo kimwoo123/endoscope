@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>narcissus</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --mut:#8b949e;
+    --green:#3fb950; --yellow:#d29922; --red:#f85149; --blue:#58a6ff; --gray:#6e7681;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+    display:flex; flex-direction:column; }
+  a { color:var(--blue); }
+
+  /* ── 공용 헤더 + 내비 ── */
+  header.top { display:flex; align-items:center; gap:14px; padding:10px 18px;
+    border-bottom:1px solid var(--line); background:var(--bg); flex:none; }
+  header.top h1 { font-size:15px; margin:0; letter-spacing:.5px; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--green); }
+  .nav { display:inline-flex; gap:4px; }
+  .nav a { font-size:13px; color:var(--mut); text-decoration:none; padding:4px 10px; border-radius:6px; }
+  .nav a:hover { color:var(--fg); }
+  .nav a.on { background:var(--panel); color:var(--fg); font-weight:600; }
+  header.top .meta { color:var(--mut); font-size:12px; }
+  header.top .spacer { flex:1; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg-btn { font:inherit; font-size:12px; color:var(--mut); background:transparent; border:0;
+    padding:4px 12px; cursor:pointer; }
+  .seg-btn + .seg-btn { border-left:1px solid var(--line); }
+  .seg-btn:hover { color:var(--fg); }
+  .seg-btn.on { background:var(--panel); color:var(--fg); font-weight:600; }
+  .seg-count { color:var(--gray); font-weight:400; margin-left:3px; }
+
+  /* ── 뷰 컨테이너 ── */
+  #view { flex:1; min-height:0; }
+  .view { height:100%; }
+  .view[hidden] { display:none !important; } /* id 셀렉터의 display 규칙보다 우선 */
+
+  /* ══ 보드 뷰 (FleetBoard) ══ */
+  #board-view { overflow-y:auto; }
+  #board { padding:14px 18px 60px; }
+  #board-view .repo { margin-bottom:22px; }
+  #board-view .repo > h2 { font-size:13px; color:var(--mut); margin:0 0 8px; font-weight:600;
+    text-transform:none; letter-spacing:.3px; }
+  #board-view .repo > h2 b { color:var(--fg); }
+  #board-view .wt { border:1px solid var(--line); border-radius:8px; margin-bottom:10px; overflow:hidden; }
+  #board-view .wt-head { display:flex; align-items:center; gap:12px; padding:9px 12px;
+    background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  #board-view .branch { font-weight:600; color:var(--blue); }
+  #board-view .git { color:var(--mut); font-size:12px; }
+  #board-view .git .dirty { color:var(--yellow); } #board-view .git .clean { color:var(--green); }
+  #board-view .git .ab { color:var(--blue); }
+  #board-view .wt-head .spacer { flex:1; }
+  #board-view .badge { font-size:12px; padding:2px 8px; border-radius:12px; border:1px solid var(--line);
+    text-decoration:none; color:var(--fg); white-space:nowrap; }
+  #board-view .badge:hover { border-color:var(--blue); }
+  #board-view .badge.green { color:var(--green); border-color:#2ea04326; }
+  #board-view .badge.yellow { color:var(--yellow); }
+  #board-view .badge.red { color:var(--red); }
+  #board-view .badge.gray { color:var(--gray); }
+  #board-view .open-pill { font-size:11px; color:var(--green); }
+  #board-view .sessions { padding:4px 12px 8px; }
+  #board-view .sess { display:flex; align-items:baseline; gap:10px; padding:6px 0;
+    border-top:1px dashed #21262d; }
+  #board-view .sess:first-child { border-top:none; }
+  #board-view .st { font-size:12px; white-space:nowrap; flex:none; width:84px; }
+  #board-view .st.waiting { color:var(--yellow); } #board-view .st.running { color:var(--green); }
+  #board-view .st.recent { color:var(--blue); } #board-view .st.idle { color:var(--gray); }
+  #board-view .stitle { font-weight:600; flex:none; width:40rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #board-view .stitle a { color:inherit; text-decoration:none; }
+  #board-view .stitle a:hover { color:var(--blue); text-decoration:underline; }
+  #board-view .sprompt { color:var(--mut); font-size:12px; flex:1; min-width:0; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  #board-view .sage { color:var(--gray); font-size:11px; flex:none; white-space:nowrap; }
+  #board-view .empty { color:var(--mut); padding:40px; text-align:center; }
+
+  /* ══ 뷰어 뷰 (JSONL viewer) — 다크 리테마 ══ */
+  #viewer-view { display:flex; overflow:hidden; }
+  #sidebar { width:340px; border-right:1px solid var(--line); display:flex;
+             flex-direction:column; background:var(--panel); }
+  #sidebar header { padding:12px; border-bottom:1px solid var(--line); }
+  #sidebar .lbl { font-size:11px; color:var(--gray); margin-bottom:4px; }
+  #viewer-view select { width:100%; padding:6px; font-size:13px; font:inherit;
+    background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+  #hint { font-size:10px; color:var(--gray); margin-top:6px; }
+  #sessions { overflow-y:auto; flex:1; }
+  #viewer-view .sess { padding:10px 12px; border-bottom:1px solid var(--line); cursor:pointer; font-size:13px;
+          border-left:3px solid transparent; }
+  #viewer-view .sess:hover { background:#1f2630; }
+  #viewer-view .sess.open { border-left-color:var(--blue); background:rgba(56,139,253,.12); }
+  #viewer-view .sess .t { color:var(--mut); font-size:11px; display:flex; align-items:center; gap:6px; }
+  .sid { font-family:Menlo, monospace; font-size:10px; color:var(--mut);
+         background:#1f2630; border:1px solid var(--line); border-radius:4px;
+         padding:1px 5px; cursor:pointer; user-select:none; }
+  .sid:hover { background:rgba(56,139,253,.18); color:var(--blue); }
+  .sid.copied { background:rgba(63,185,80,.18); color:var(--green); border-color:#2ea04355; }
+
+  #main { flex:1; display:flex; flex-direction:row; overflow:hidden; }
+  .pane { flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden;
+          border-left:1px solid var(--line); }
+  .pane:first-child { border-left:none; }
+  .pane-title { padding:12px 14px; font-size:15px; font-weight:700;
+                border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px;
+                cursor:pointer; }
+  .pane.active .pane-title { background:rgba(56,139,253,.12); }
+  .label-text { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pane-title:hover .label-text::after { content:" ✏️"; font-size:12px; }
+  .pane-title input { font:inherit; flex:1; padding:2px 6px; min-width:0;
+                      background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; }
+  .pane-close { color:var(--gray); font-weight:400; font-size:18px; line-height:1;
+                padding:0 4px; border-radius:4px; }
+  .pane-close:hover { background:var(--line); color:var(--red); }
+  .pane-conv { overflow-y:auto; padding:16px 18px; flex:1; }
+
+  .msg { margin-bottom:20px; display:flex; flex-direction:column; }
+  .msg.user { align-items:flex-end; }
+  .msg.assistant { align-items:flex-start; }
+  .msg.user .block.text { max-width:85%; background:rgba(56,139,253,.12); border:1px solid rgba(56,139,253,.3);
+                          border-radius:10px; padding:8px 12px; }
+  .msg.assistant .block.text { max-width:85%; background:rgba(63,185,80,.10); border:1px solid rgba(63,185,80,.3);
+                               border-radius:10px; padding:8px 12px; }
+  .block.thinking, .toolgroup { align-self:stretch; }
+  .block.md { white-space:normal; }
+  .block.md > :first-child { margin-top:0; }
+  .block.md > :last-child { margin-bottom:0; }
+  .block.md p { margin:8px 0; }
+  .block.md h1, .block.md h2, .block.md h3, .block.md h4 { margin:12px 0 6px; line-height:1.3; }
+  .block.md ul, .block.md ol { margin:8px 0; padding-left:22px; }
+  .block.md li { margin:2px 0; }
+  .block.md code { font-family:Menlo, monospace; font-size:0.9em;
+                   background:rgba(255,255,255,.08); padding:1px 4px; border-radius:4px; }
+  .block.md pre { background:#0a0c10; color:var(--fg); padding:10px 12px;
+                  border:1px solid var(--line); border-radius:8px; overflow-x:auto; }
+  .block.md pre code { background:none; padding:0; color:inherit; font-size:0.85em; }
+  .block.md table { border-collapse:collapse; margin:8px 0; }
+  .block.md th, .block.md td { border:1px solid var(--line); padding:4px 8px; }
+  .block.md blockquote { border-left:3px solid var(--line); margin:8px 0;
+                         padding-left:10px; color:var(--mut); }
+  .block.md a { color:var(--blue); }
+  .role { font-weight:700; }
+  .role.user { color:var(--blue); }
+  .role.assistant { color:var(--green); }
+  .time { color:var(--gray); font-size:11px; font-weight:400; margin-left:8px; }
+  .tok { color:var(--mut); font-size:11px; font-weight:400; margin-left:8px;
+         background:#1f2630; border-radius:6px; padding:1px 6px; cursor:help; }
+  .block { white-space:pre-wrap; word-break:break-word; margin:6px 0; line-height:1.5; }
+  .block.thinking { color:var(--gray); font-style:italic; }
+  .toolgroup { border:1px solid #5c4a1f; border-radius:6px; margin:8px 0;
+               overflow:hidden; background:#1c1a12; }
+  .toolgroup .tool { color:var(--yellow); font-family:Menlo, monospace; font-size:12px;
+                     padding:8px 10px; white-space:pre-wrap; word-break:break-word; }
+  .toolgroup .result { color:var(--mut); font-family:Menlo, monospace; font-size:12px;
+                       padding:8px 10px; white-space:pre-wrap; word-break:break-word;
+                       border-top:1px dashed #5c4a1f; background:#14181f; }
+  .toolgroup .reslabel { color:var(--gray); font-size:10px; display:block; margin-bottom:4px; }
+  #viewer-view .empty { color:var(--mut); padding:40px; text-align:center; }
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="dot"></span>
+  <h1>narcissus</h1>
+  <nav class="nav">
+    <a href="#/board" data-route="board">FleetBoard</a>
+    <a href="#/viewer" data-route="viewer">뷰어</a>
+  </nav>
+  <span class="meta" id="meta"></span>
+  <span class="spacer"></span>
+  <div class="seg" id="seg">
+    <button class="seg-btn" data-mode="active">활성만</button>
+    <button class="seg-btn" data-mode="recent">최근까지<span class="seg-count" id="recentCount"></span></button>
+    <button class="seg-btn" data-mode="all">전체<span class="seg-count" id="idleCount"></span></button>
+  </div>
+  <span class="meta" id="updated"></span>
+</header>
+
+<div id="view">
+  <div class="view" id="board-view"><main id="board"><div class="empty">불러오는 중…</div></main></div>
+  <div class="view" id="viewer-view" hidden>
+    <div id="sidebar">
+      <header>
+        <div class="lbl">프로젝트</div>
+        <select id="project"></select>
+        <div id="hint">클릭: 현재 패널에서 열기 · ⌘/Ctrl+클릭: 새 패널 (최대 4)</div>
+      </header>
+      <div id="sessions"></div>
+    </div>
+    <div id="main"></div>
+  </div>
+</div>
+
+<script>
+// ════════════════════ 라우터 ════════════════════
+// 해시: #/board (기본) · #/viewer · #/viewer?project=&file= (세션 딥링크)
+const Views = {};
+function parseHash() {
+  let h = location.hash.slice(1);
+  if (!h.startsWith('/')) h = '/board';
+  const qi = h.indexOf('?');
+  const path = qi < 0 ? h : h.slice(0, qi);
+  const params = new URLSearchParams(qi < 0 ? '' : h.slice(qi + 1));
+  return { route: path === '/viewer' ? 'viewer' : 'board', params };
+}
+function applyRoute() {
+  const { route, params } = parseHash();
+  document.getElementById('board-view').hidden = route !== 'board';
+  document.getElementById('viewer-view').hidden = route !== 'viewer';
+  document.getElementById('seg').hidden = route !== 'board';
+  document.getElementById('meta').style.display = route === 'board' ? '' : 'none';
+  document.getElementById('updated').style.display = route === 'board' ? '' : 'none';
+  document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.route === route));
+  if (route === 'viewer' && Views.viewer) Views.viewer.onShow(params);
+}
+window.addEventListener('hashchange', applyRoute);
+
+// ════════════════════ 보드 모듈 ════════════════════
+(function () {
+  const STATE = {
+    waiting: {cls:'waiting', label:'입력대기'},
+    running: {cls:'running', label:'작업중'},
+    recent:  {cls:'recent',  label:'최근'},
+    idle:    {cls:'idle',    label:'idle'},
+  };
+  function ago(iso) {
+    if (!iso) return '';
+    const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+    if (s < 60) return Math.floor(s)+'초 전';
+    if (s < 3600) return Math.floor(s/60)+'분 전';
+    if (s < 86400) return Math.floor(s/3600)+'시간 전';
+    return Math.floor(s/86400)+'일 전';
+  }
+  const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  function pipeBadge(p) {
+    if (!p) return '';
+    let cls='gray', icon='○';
+    if (p.status !== 'completed') { cls='yellow'; icon='◐'; }
+    else if (p.result === 'succeeded') { cls='green'; icon='●'; }
+    else if (p.result === 'failed') { cls='red'; icon='●'; }
+    else { cls='yellow'; icon='●'; }
+    const num = p.number ? ' #'+esc(p.number) : '';
+    const label = p.status !== 'completed' ? 'running' : (p.result||'');
+    return `<a class="badge ${cls}" href="${esc(p.url)}" target="_blank" title="pipeline">${icon} ${esc(label)}${num}</a>`;
+  }
+  function gitInfo(w) {
+    if (!w.isGit) return '<span class="git">—</span>';
+    let parts = [];
+    parts.push(w.clean ? '<span class="clean">clean</span>' : `<span class="dirty">●${w.dirty}</span>`);
+    if (w.ahead) parts.push(`<span class="ab">↑${w.ahead}</span>`);
+    if (w.behind) parts.push(`<span class="ab">↓${w.behind}</span>`);
+    return `<span class="git">${parts.join(' ')}</span>`;
+  }
+
+  function render(state) {
+    lastState = state;
+    document.getElementById('meta').textContent =
+      state.adoConfigured ? 'Azure DevOps 연결됨' : 'ADO 미설정 (ADO_PAT)';
+    document.getElementById('updated').textContent = '갱신 ' + ago(state.generatedAt);
+
+    const board = document.getElementById('board');
+    const recentCount = document.getElementById('recentCount');
+    const idleCount = document.getElementById('idleCount');
+    if (!state.repos || !state.repos.length) {
+      recentCount.textContent = ''; idleCount.textContent = '';
+      board.innerHTML = `<div class="empty">표시할 세션이 없어요.<br>
+        최근 활동이 FLEETBOARD_MAX_AGE_HOURS 안에 있는지 확인하세요.</div>`;
+      return;
+    }
+    let html = '';
+    let recentN = 0, idleN = 0;
+    for (const repo of state.repos) {
+      let wtHtml = '';
+      for (const w of repo.worktrees) {
+        let sessions = w.sessions || [];
+        for (const s of sessions) {
+          if (s.state === 'recent') recentN++;
+          else if (s.state === 'idle') idleN++;
+        }
+        if (mode !== 'all') {
+          sessions = sessions.filter(s =>
+            s.state === 'waiting' || s.state === 'running' || (mode === 'recent' && s.state === 'recent'));
+          if (sessions.length === 0) continue;
+        }
+        const openPill = w.open ? '<span class="open-pill">● VSCode</span>' : '';
+        const pr = w.pr ? `<a class="badge blue" href="${esc(w.pr.url)}" target="_blank" title="${esc(w.pr.title)}">PR !${w.pr.id}</a>` : '';
+        const merged = w.merged ? `<a class="badge green" href="${esc(w.merged.url)}" target="_blank" title="${esc(w.merged.title)}">✓ merged !${w.merged.id}</a>` : '';
+        wtHtml += `<div class="wt">
+          <div class="wt-head">
+            <span class="branch">${esc(w.branch || '(no branch)')}</span>
+            ${gitInfo(w)} ${openPill}
+            <span class="spacer"></span>
+            ${merged}
+            ${pr}
+            ${pipeBadge(w.pipeline)}
+            <a class="badge openvs" data-path="${esc(w.path)}" href="#" title="VSCode 창으로 이동 (이미 열려있으면 그 창 포커스)">⧉ VSCode</a>
+          </div>
+          <div class="sessions">`;
+        if (!sessions.length) {
+          wtHtml += `<div class="sess"><span class="st idle">—</span><span class="sprompt">세션 없음</span></div>`;
+        }
+        for (const s of sessions) {
+          const st = STATE[s.state] || STATE.idle;
+          // 제목 클릭 → 같은 앱 안에서 뷰어 뷰로 (새 탭 아님)
+          const titleInner = esc(s.title) || '<span style="color:var(--gray)">제목 없음</span>';
+          const title = (s.project && s.file)
+            ? `<a href="#/viewer?project=${encodeURIComponent(s.project)}&file=${encodeURIComponent(s.file)}" title="대화 내용 보기">${titleInner}</a>`
+            : titleInner;
+          wtHtml += `<div class="sess">
+            <span class="st ${st.cls}">${st.label}</span>
+            <span class="stitle">${title}</span>
+            <span class="sprompt">${esc(s.prompt)}</span>
+            <span class="sage">${ago(s.lastActivity)}</span>
+          </div>`;
+        }
+        wtHtml += `</div></div>`;
+      }
+      if (!wtHtml) continue;
+      html += `<div class="repo"><h2><b>${esc(repo.name)}</b> <span style="color:var(--gray)">${esc(repo.path)}</span></h2>${wtHtml}</div>`;
+    }
+    recentCount.textContent = recentN ? ` (${recentN})` : '';
+    idleCount.textContent = idleN ? ` (${idleN})` : '';
+    if (!html) {
+      board.innerHTML = `<div class="empty">${mode === 'active' ? '활성(입력대기·작업중)' : '최근'} 세션이 없어요.<br>
+        최근 ${recentN} · idle ${idleN}개가 있습니다 — 위 “최근까지”·“전체”로 펼쳐보세요.</div>`;
+      return;
+    }
+    board.innerHTML = html;
+  }
+
+  const FILTER_KEY = 'fleetboard.filter';
+  function loadMode() {
+    const m = localStorage.getItem(FILTER_KEY);
+    if (m === 'active' || m === 'recent' || m === 'all') return m;
+    return localStorage.getItem('fleetboard.showIdle') === '1' ? 'all' : 'active';
+  }
+  let mode = loadMode();
+  let lastState = null;
+  const seg = document.getElementById('seg');
+  function syncSeg() {
+    seg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  }
+  seg.addEventListener('click', e => {
+    const btn = e.target.closest('.seg-btn');
+    if (!btn) return;
+    mode = btn.dataset.mode;
+    localStorage.setItem(FILTER_KEY, mode);
+    syncSeg();
+    if (lastState) render(lastState);
+  });
+  syncSeg();
+
+  // ⧉ VSCode 뱃지 → 서버가 `code <경로>` 실행 (열린 창 포커스)
+  document.getElementById('board').addEventListener('click', e => {
+    const a = e.target.closest('.openvs');
+    if (!a) return;
+    e.preventDefault();
+    fetch('/api/open?path=' + encodeURIComponent(a.dataset.path), {method:'POST'}).catch(()=>{});
+  });
+
+  async function tick() {
+    try {
+      const r = await fetch('/api/state', {cache:'no-store'});
+      render(await r.json());
+    } catch (e) {
+      document.getElementById('updated').textContent = '연결 끊김…';
+    }
+  }
+  tick();
+  setInterval(tick, 5000);
+})();
+
+// ════════════════════ 뷰어 모듈 ════════════════════
+(function () {
+  async function j(u){ return (await fetch(u)).json(); }
+  function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function fmtTok(n){ return n>=1000 ? (n/1000).toFixed(n>=10000?0:1)+'k' : ''+n; }
+  function shortId(id){ return (id||'').slice(0,8); }
+
+  function sidChip(id){
+    if(!id) return '';
+    return `<span class="sid" title="클릭해서 세션 ID 복사: ${esc(id)}"`+
+           ` onclick='__copyId(event,"${esc(id)}")'>${esc(shortId(id))}</span>`;
+  }
+  window.__copyId = async function(ev, id){
+    ev.stopPropagation();
+    try { await navigator.clipboard.writeText(id); } catch(e) {}
+    const el = ev.currentTarget;
+    const orig = el.textContent;
+    el.classList.add('copied'); el.textContent = '✓ 복사됨';
+    setTimeout(()=>{ el.classList.remove('copied'); el.textContent = orig; }, 1000);
+  };
+
+  const MAX_PANES = 4;
+  let panes = [];
+  let activeId = null;
+  let curPid = null;
+  let seq = 0;
+  let inited = false;
+  let es = null;
+
+  async function initViewer(){
+    const projs = await j('/api/projects');
+    const sel = document.getElementById('project');
+    sel.innerHTML = projs.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+    sel.onchange = ()=>loadSessions(sel.value);
+    if(projs.length) await loadSessions(projs[0].id);
+    renderEmpty();
+    // SSE: 파일 변경을 서버가 밀어줌 (200ms 디바운스)
+    es = new EventSource('/api/events');
+    es.onmessage = (e)=>{
+      const ev = JSON.parse(e.data);
+      if((ev.kind === 'created' || ev.kind === 'deleted') && ev.project === curPid){
+        clearTimeout(listTimer);
+        listTimer = setTimeout(()=>loadSessions(curPid), 200);
+      }
+      if(ev.kind === 'modified'){
+        panes.filter(p=>p.pid===ev.project && p.file===ev.file).forEach(p=>{
+          clearTimeout(paneTimers[p.id]);
+          paneTimers[p.id] = setTimeout(()=>refreshPane(p, true), 200);
+        });
+      }
+    };
+  }
+
+  // 보드에서 #/viewer?project=&file= 로 넘어오면 그 세션을 연다.
+  async function openDeep(pid, file){
+    const sel = document.getElementById('project');
+    if(sel.value !== pid) sel.value = pid;
+    await loadSessions(pid);
+    const existing = panes.find(p=>p.pid===pid && p.file===file);
+    if(existing){ setActive(existing.id); return; }
+    const active = panes.find(p=>p.id===activeId);
+    if(active){ active.pid=pid; active.file=file; active.title=''; active.label=''; refreshPane(active, false); }
+    else addPane(pid, file);
+    loadSessions(curPid);
+  }
+
+  async function loadSessions(pid){
+    curPid = pid;
+    const list = await j('/api/sessions?project='+encodeURIComponent(pid));
+    const box = document.getElementById('sessions');
+    const openFiles = new Set(panes.filter(p=>p.pid===pid).map(p=>p.file));
+    box.innerHTML = list.map(s=>{
+      const open = openFiles.has(s.file) ? ' open' : '';
+      return `<div class="sess${open}" onclick='__onSessionClick(event,"${pid}","${s.file}")'>
+         <div>${s.label?'🏷 ':''}${esc(s.label||s.title)}</div>
+         <div class="t"><span>${s.mtime}</span>${sidChip(s.sessionId)}</div></div>`;
+    }).join('') || '<div class="empty">세션 없음</div>';
+  }
+
+  window.__onSessionClick = function(ev, pid, file){
+    const wantNew = ev.metaKey || ev.ctrlKey;
+    if(wantNew){
+      if(panes.length >= MAX_PANES) return;
+      addPane(pid, file);
+    } else {
+      const active = panes.find(p=>p.id===activeId);
+      if(active){
+        active.pid = pid; active.file = file; active.title = ''; active.label = '';
+        refreshPane(active, false);
+      } else {
+        addPane(pid, file);
+      }
+    }
+    loadSessions(curPid);
+  };
+
+  function paneHTML(p){
+    const active = p.id===activeId ? ' active' : '';
+    return `<div class="pane${active}" data-pane="${p.id}" onmousedown="__setActive(${p.id})">
+        <div class="pane-title" onclick="__editLabel(event, ${p.id})">
+          <span class="label-text">로딩…</span>
+          <span class="sid-slot"></span>
+          <span class="pane-close" onclick="event.stopPropagation(); __closePane(${p.id})">×</span>
+        </div>
+        <div class="pane-conv"><div class="empty">로딩…</div></div>
+      </div>`;
+  }
+  function renderEmpty(){
+    document.getElementById('main').innerHTML =
+      '<div class="empty">왼쪽에서 세션을 고르세요. (⌘/Ctrl+클릭으로 새 패널)</div>';
+  }
+  function updateActiveClasses(){
+    document.querySelectorAll('.pane').forEach(el=>
+      el.classList.toggle('active', +el.dataset.pane===activeId));
+  }
+  function addPane(pid, file){
+    const pane = {id: ++seq, pid, file, title: '', label: '', sid: ''};
+    const main = document.getElementById('main');
+    if(!panes.length) main.innerHTML = '';
+    panes.push(pane);
+    activeId = pane.id;
+    main.insertAdjacentHTML('beforeend', paneHTML(pane));
+    updateActiveClasses();
+    refreshPane(pane, false);
+  }
+  window.__closePane = function(id){
+    panes = panes.filter(p=>p.id!==id);
+    const el = document.querySelector(`.pane[data-pane="${id}"]`);
+    if(el) el.remove();
+    if(activeId===id) activeId = panes.length ? panes[panes.length-1].id : null;
+    if(!panes.length) renderEmpty();
+    updateActiveClasses();
+    loadSessions(curPid);
+  };
+  window.__setActive = function(id){
+    if(activeId===id) return;
+    activeId = id;
+    updateActiveClasses();
+  };
+
+  function renderMessages(messages){
+    return messages.slice().reverse().map(m=>{
+      const role = m.role==='user' ? '나' : 'Claude';
+      const blocks = m.blocks.map(b=>{
+        if(b.kind==='tool'){
+          let html = `<div class="tool">${esc(b.text)}</div>`;
+          if(b.result!==undefined)
+            html += `<div class="result"><span class="reslabel">결과</span>${esc(b.result)}</div>`;
+          return `<div class="toolgroup">${html}</div>`;
+        }
+        if(b.html){
+          return `<div class="block ${b.kind} md">${b.html}</div>`;
+        }
+        return `<div class="block ${b.kind}">${esc(b.text)}</div>`;
+      }).join('');
+      let tok = '';
+      if(m.tokens){
+        const t = m.tokens;
+        const tip = `출력 ${t.output} · 입력 ${t.input} · 캐시읽기 ${t.cacheRead} · 캐시생성 ${t.cacheCreate}`;
+        tok = `<span class="tok" title="${tip}">${fmtTok(t.output)} tok</span>`;
+      }
+      return `<div class="msg ${m.role}">`+
+             `<div class="head"><span class="role ${m.role}">${role}</span>`+
+             `<span class="time">${m.time}</span>${tok}</div>${blocks}</div>`;
+    }).join('');
+  }
+  function setTitleText(el, pane){
+    el.textContent = (pane.label || pane.title) || '(제목 없음)';
+    el.title = pane.label ? '원래 제목: '+pane.title : '클릭해서 라벨 달기';
+  }
+  async function refreshPane(pane, keepScroll){
+    const el = document.querySelector(`.pane[data-pane="${pane.id}"]`);
+    if(!el) return;
+    const data = await j('/api/session?project='+encodeURIComponent(pane.pid)+'&file='+encodeURIComponent(pane.file));
+    pane.title = data.title; pane.label = data.label || ''; pane.sid = data.sessionId || '';
+    const labelEl = el.querySelector('.label-text');
+    if(labelEl) setTitleText(labelEl, pane);
+    const slot = el.querySelector('.sid-slot');
+    if(slot) slot.innerHTML = sidChip(pane.sid);
+    const conv = el.querySelector('.pane-conv');
+    const atTop = conv.scrollTop <= 40;
+    const prevScroll = conv.scrollTop;
+    const prevHeight = conv.scrollHeight;
+    if(!data.messages.length){ conv.innerHTML='<div class="empty">표시할 메시지 없음</div>'; return; }
+    conv.innerHTML = renderMessages(data.messages);
+    if(!keepScroll || atTop) conv.scrollTop = 0;
+    else conv.scrollTop = prevScroll + (conv.scrollHeight - prevHeight);
+  }
+
+  window.__editLabel = function(ev, id){
+    const pane = panes.find(p=>p.id===id);
+    const bar = ev.currentTarget;
+    if(!pane || bar.querySelector('input')) return;
+    const labelEl = bar.querySelector('.label-text');
+    const inp = document.createElement('input');
+    inp.value = pane.label || '';
+    inp.placeholder = pane.title;
+    labelEl.replaceWith(inp);
+    inp.focus(); inp.select();
+    let finished = false;
+    const done = async (save)=>{
+      if(finished) return; finished = true;
+      const v = inp.value.trim();
+      if(save && v !== (pane.label || '')){
+        const r = await (await fetch('/api/label', {method:'POST',
+          body: JSON.stringify({project: pane.pid, file: pane.file, label: v})})).json();
+        if(r.ok){
+          panes.filter(p=>p.pid===pane.pid && p.file===pane.file).forEach(p=>p.label=v);
+          loadSessions(curPid);
+        }
+      }
+      const span = document.createElement('span');
+      span.className = 'label-text';
+      setTitleText(span, pane);
+      inp.replaceWith(span);
+    };
+    inp.onkeydown = e=>{ if(e.key==='Enter'){ e.preventDefault(); done(true); } if(e.key==='Escape') done(false); };
+    inp.onblur = ()=>done(false);
+  };
+
+  let listTimer = null;
+  const paneTimers = {};
+
+  Views.viewer = {
+    async onShow(params){
+      if(!inited){ inited = true; await initViewer(); }
+      const pid = params.get('project'), file = params.get('file');
+      if(pid && file) openDeep(pid, file);
+    }
+  };
+})();
+
+// 최초 라우팅 (두 모듈 등록 후)
+applyRoute();
+</script>
+</body>
+</html>

@@ -36,11 +36,8 @@ import (
 	"time"
 )
 
-//go:embed web/board.html
-var boardHTML []byte
-
-//go:embed web/viewer.html
-var viewerHTML []byte
+//go:embed web/app.html
+var appHTML []byte
 
 // 뷰어 쪽 핸들러(api.go·labels.go·watch.go)가 참조하는 전역.
 // main()에서 cfg.ClaudeHome 기준으로 채운다.
@@ -73,14 +70,14 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// ── 보드 (FleetBoard) ──
+	// ── SPA 셸 (FleetBoard + 뷰어를 해시 라우팅으로) ──
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(boardHTML)
+		w.Write(appHTML)
 	})
 	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, build(cfg, ado))
@@ -105,10 +102,13 @@ func main() {
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 
-	// ── 뷰어 (JSONL viewer) ──
+	// ── 구 /viewer URL 호환 → 해시 라우트로 리다이렉트 (해시는 서버로 안 오므로 직접 구성) ──
 	mux.HandleFunc("/viewer", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(viewerHTML)
+		target := "/#/viewer"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusFound)
 	})
 	mux.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, listProjects())
