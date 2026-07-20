@@ -2,9 +2,10 @@
 
 // endoscope — Claude 세션 통합 로컬 대시보드 (브라우저 진입점).
 //
-// 한 바이너리·한 포트에서 두 화면을 서빙한다:
+// 한 바이너리·한 포트에서 세 화면을 서빙한다:
 //   #/board   Board  — 워크트리별 Claude 세션 + Git + Azure DevOps 상태 (5초 폴링)
 //   #/viewer  Viewer — 세션 하나의 대화 내용 (fsnotify + SSE 실시간)
+//   #/code    Code   — 워크트리 파일 트리 + 코드 열람 (문법 하이라이팅)
 //
 // 보드의 세션 행을 클릭하면 /viewer?project=&file= 로 그 세션의 대화가 열린다.
 //
@@ -24,6 +25,7 @@
 //   parse.go      — 뷰어용 JSONL 파싱: 제목 추출, 메시지 블록 펼치기
 //   cache.go      — 뷰어용 증분 라인 캐시
 //   api.go        — 뷰어 API 응답 조립
+//   code.go       — 코드 뷰어: 워크트리 파일 트리 + chroma 하이라이팅
 //   labels.go     — 사용자 라벨 저장소
 //   markdown.go   — Claude 텍스트 마크다운 → HTML
 //   watch.go      — fsnotify 감시 + SSE 허브

@@ -3,6 +3,7 @@ module endoscope
 go 1.25.0
 
 require (
+	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/wailsapp/wails/v2 v2.13.0
 	github.com/yuin/goldmark v1.8.2
@@ -11,6 +12,7 @@ require (
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
+	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

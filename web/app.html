@@ -167,6 +167,35 @@
                        border-top:1px dashed #5c4a1f; background:#14181f; }
   .toolgroup .reslabel { color:var(--gray); font-size:10px; display:block; margin-bottom:4px; }
   #viewer-view .empty { color:var(--mut); padding:40px; text-align:center; }
+
+  /* ══ 코드 뷰 (Code) — 워크트리 파일 트리 + chroma 하이라이팅 ══ */
+  #code-view { display:flex; overflow:hidden; }
+  #code-side { width:300px; border-right:1px solid var(--line); display:flex;
+               flex-direction:column; background:var(--panel); }
+  #code-side header { padding:12px; border-bottom:1px solid var(--line); }
+  #code-side .lbl { font-size:11px; color:var(--gray); margin-bottom:4px; }
+  #code-view select { width:100%; padding:6px; font:inherit; font-size:13px;
+    background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+  #tree { overflow:auto; flex:1; padding:6px 0 40px; }
+  .trow { display:flex; align-items:center; gap:5px; padding:3px 8px; cursor:pointer;
+          font-size:13px; white-space:nowrap; }
+  .trow:hover { background:#1f2630; }
+  .trow.on { background:rgba(56,139,253,.14); color:var(--blue); }
+  .trow .tw { width:12px; flex:none; color:var(--gray); font-size:10px; }
+  .trow .ti { flex:none; }
+  .tkids { display:none; }
+  .tkids.open { display:block; }
+
+  #code-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+  #code-path { padding:10px 14px; border-bottom:1px solid var(--line); font-size:13px;
+               color:var(--mut); display:flex; align-items:center; gap:10px; }
+  #code-path b { color:var(--fg); }
+  #code-body { flex:1; overflow:auto; }
+  /* chroma 출력은 인라인 스타일을 갖고 온다 — 여백과 라인번호 열만 조정 */
+  #code-body pre { margin:0; padding:12px 14px; font-size:12.5px; line-height:1.5; }
+  #code-body table { border-collapse:collapse; }
+  #code-body td:first-child pre { color:var(--gray); padding-right:0; user-select:none; }
+  #code-view .empty { color:var(--mut); padding:40px; text-align:center; }
 </style>
 </head>
 <body>
@@ -176,6 +205,7 @@
   <nav class="nav">
     <a href="#/board" data-route="board">Board</a>
     <a href="#/viewer" data-route="viewer">Viewer</a>
+    <a href="#/code" data-route="code">Code</a>
   </nav>
   <span class="spacer"></span>
   <span class="status" id="meta"></span>
@@ -200,11 +230,24 @@
     </div>
     <div id="main"></div>
   </div>
+  <div class="view" id="code-view" hidden>
+    <div id="code-side">
+      <header>
+        <div class="lbl">워크트리</div>
+        <select id="code-root"></select>
+      </header>
+      <div id="tree"></div>
+    </div>
+    <div id="code-main">
+      <div id="code-path"><span>파일을 고르세요</span></div>
+      <div id="code-body"></div>
+    </div>
+  </div>
 </div>
 
 <script>
 // ════════════════════ 라우터 ════════════════════
-// 해시: #/board (기본) · #/viewer · #/viewer?project=&file= (세션 딥링크)
+// 해시: #/board (기본) · #/viewer · #/viewer?project=&file= (세션 딥링크) · #/code
 const Views = {};
 function parseHash() {
   let h = location.hash.slice(1);
@@ -212,17 +255,20 @@ function parseHash() {
   const qi = h.indexOf('?');
   const path = qi < 0 ? h : h.slice(0, qi);
   const params = new URLSearchParams(qi < 0 ? '' : h.slice(qi + 1));
-  return { route: path === '/viewer' ? 'viewer' : 'board', params };
+  const known = { '/viewer': 'viewer', '/code': 'code' };
+  return { route: known[path] || 'board', params };
 }
 function applyRoute() {
   const { route, params } = parseHash();
   document.getElementById('board-view').hidden = route !== 'board';
   document.getElementById('viewer-view').hidden = route !== 'viewer';
+  document.getElementById('code-view').hidden = route !== 'code';
   document.getElementById('seg').hidden = route !== 'board';
   document.getElementById('meta').style.display = route === 'board' ? '' : 'none';
   document.getElementById('updated').style.display = route === 'board' ? '' : 'none';
   document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('on', a.dataset.route === route));
   if (route === 'viewer' && Views.viewer) Views.viewer.onShow(params);
+  if (route === 'code' && Views.code) Views.code.onShow(params);
 }
 window.addEventListener('hashchange', applyRoute);
 
@@ -616,7 +662,83 @@ window.addEventListener('hashchange', applyRoute);
   };
 })();
 
-// 최초 라우팅 (두 모듈 등록 후)
+// ════════════════════ 코드 모듈 ════════════════════
+(function () {
+  async function j(u){ return (await fetch(u)).json(); }
+  function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  let root = null, inited = false;
+  const tree = document.getElementById('tree');
+  const sel = document.getElementById('code-root');
+
+  function q(path){ return 'root='+encodeURIComponent(root)+'&path='+encodeURIComponent(path); }
+
+  // 트리는 디렉터리 단위 lazy 로딩 — 펼칠 때 그 디렉터리만 받아온다.
+  function rowsHTML(entries, base, depth){
+    return entries.map(e=>{
+      const p = base ? base+'/'+e.name : e.name;
+      const pad = 8 + depth*13;
+      return `<div class="tnode">
+        <div class="trow" data-path="${esc(p)}" data-dir="${e.dir?1:0}" style="padding-left:${pad}px">
+          <span class="tw">${e.dir?'▶':''}</span><span class="ti">${e.dir?'📁':'📄'}</span>${esc(e.name)}
+        </div>
+        ${e.dir?`<div class="tkids" data-depth="${depth+1}"></div>`:''}
+      </div>`;
+    }).join('');
+  }
+
+  async function loadRoot(){
+    tree.innerHTML = '<div class="empty">불러오는 중…</div>';
+    tree.innerHTML = rowsHTML(await j('/api/code/tree?'+q('')), '', 0)
+      || '<div class="empty">파일 없음</div>';
+  }
+
+  async function toggleDir(row){
+    const kids = row.parentElement.querySelector('.tkids');
+    const open = kids.classList.toggle('open');
+    row.querySelector('.tw').textContent = open ? '▼' : '▶';
+    if(open && !kids.dataset.loaded){
+      kids.dataset.loaded = '1';
+      kids.innerHTML = rowsHTML(await j('/api/code/tree?'+q(row.dataset.path)),
+                                row.dataset.path, +kids.dataset.depth);
+    }
+  }
+
+  async function openFile(row){
+    tree.querySelectorAll('.trow.on').forEach(el=>el.classList.remove('on'));
+    row.classList.add('on');
+    const path = row.dataset.path;
+    document.getElementById('code-path').innerHTML = `<b>${esc(path)}</b>`;
+    const body = document.getElementById('code-body');
+    body.innerHTML = '<div class="empty">불러오는 중…</div>';
+    const f = await j('/api/code/file?'+q(path));
+    document.getElementById('code-path').innerHTML =
+      `<b>${esc(path)}</b><span>${esc(f.lang||'')}${f.lines?' · '+f.lines+'줄':''}</span>`;
+    body.innerHTML = f.note ? `<div class="empty">${esc(f.note)}</div>` : f.html;
+    body.scrollTop = 0;
+  }
+
+  tree.addEventListener('click', e=>{
+    const row = e.target.closest('.trow');
+    if(!row) return;
+    if(row.dataset.dir === '1') toggleDir(row); else openFile(row);
+  });
+
+  Views.code = {
+    async onShow(){
+      if(inited) return;
+      inited = true;
+      const roots = await j('/api/code/roots');
+      if(!roots.length){ tree.innerHTML = '<div class="empty">워크트리 없음</div>'; return; }
+      sel.innerHTML = roots.map(r=>`<option value="${esc(r.path)}">${esc(r.repo)} · ${esc(r.branch)}</option>`).join('');
+      sel.onchange = ()=>{ root = sel.value; loadRoot(); };
+      root = roots[0].path;
+      loadRoot();
+    }
+  };
+})();
+
+// 최초 라우팅 (세 모듈 등록 후)
 applyRoute();
 </script>
 </body>

@@ -111,5 +111,36 @@ func setup() (http.Handler, Config) {
 	})
 	mux.HandleFunc("/api/events", sseHandler)
 
+	// ── 코드 뷰어 (#/code) — 열람 범위는 보드에 있는 워크트리로 제한 ──
+	mux.HandleFunc("/api/code/roots", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, codeRoots(cfg))
+	})
+	// root/path 검증은 두 핸들러가 공유한다: 보드 워크트리 + 루트 밖 탈출 차단.
+	resolve := func(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+		q := r.URL.Query()
+		root, rel := q.Get("root"), q.Get("path")
+		if !isCodeRoot(cfg, root) {
+			http.Error(w, "unknown worktree", http.StatusBadRequest)
+			return "", "", false
+		}
+		abs, ok := safeJoin(root, rel)
+		if !ok {
+			http.Error(w, "bad path", http.StatusBadRequest)
+			return "", "", false
+		}
+		return rel, abs, true
+	}
+	mux.HandleFunc("/api/code/tree", func(w http.ResponseWriter, r *http.Request) {
+		root := r.URL.Query().Get("root")
+		if _, abs, ok := resolve(w, r); ok {
+			writeJSON(w, listCodeDir(root, abs))
+		}
+	})
+	mux.HandleFunc("/api/code/file", func(w http.ResponseWriter, r *http.Request) {
+		if rel, abs, ok := resolve(w, r); ok {
+			writeJSON(w, readCode(rel, abs))
+		}
+	})
+
 	return mux, cfg
 }
