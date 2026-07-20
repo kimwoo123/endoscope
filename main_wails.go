@@ -14,6 +14,7 @@ import (
 	"context"
 
 	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
@@ -29,6 +30,10 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Handler: handler, // 기존 http.ServeMux 를 그대로 재사용
 		},
+		// 표준 macOS App/Edit 메뉴. Edit 메뉴가 있어야 WebView 안에서
+		// Cmd+C/V/X/A(복사·붙여넣기·전체선택), App 메뉴에서 Cmd+Q 가 동작한다.
+		// (이 버전은 menu.DefaultMacMenu() 이 비활성이라 role 헬퍼로 직접 구성)
+		Menu: menu.NewMenuFromItems(menu.AppMenu(), menu.EditMenu()),
 		OnStartup: func(ctx context.Context) {},
 		Mac: &mac.Options{
 			TitleBar:             mac.TitleBarHiddenInset(),
