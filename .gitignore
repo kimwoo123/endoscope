@@ -1,5 +1,9 @@
 # 빌드 산출물
 /endoscope
 
+# Wails 데스크톱 앱: 컴파일 출력 + 자동 생성 바인딩 (매 빌드 재생성)
+/build/bin/
+/frontend/
+
 # 로컬 시크릿/설정 (ADO_PAT 등) — 커밋 금지
 /.env

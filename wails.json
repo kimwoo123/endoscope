@@ -1,0 +1,15 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "endoscope",
+  "outputfilename": "endoscope",
+  "frontend:install": "",
+  "frontend:build": "",
+  "wailsjsdir": "./frontend",
+  "author": {
+    "name": "Kim Wooseok"
+  },
+  "info": {
+    "productName": "endoscope",
+    "comments": "Claude 세션 통합 로컬 대시보드"
+  }
+}

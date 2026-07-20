@@ -100,10 +100,12 @@ func startWatcher() error {
 }
 
 func sseHandler(w http.ResponseWriter, r *http.Request) {
-	fl, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
+	// Wails(macOS) WebView 의 writer 는 http.Flusher 를 구현하지 않지만 Write 가 곧바로
+	// WebView 로 전달되므로, Flush 는 있으면 쓰고 없으면 생략한다.
+	// (브라우저 net/http 경로에서는 Flusher 가 있어 기존과 동일하게 동작한다.)
+	flush := func() {}
+	if fl, ok := w.(http.Flusher); ok {
+		flush = fl.Flush
 	}
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -112,15 +114,20 @@ func sseHandler(w http.ResponseWriter, r *http.Request) {
 	ping := time.NewTicker(15 * time.Second)
 	defer ping.Stop()
 	for {
+		var err error
 		select {
 		case msg := <-ch:
-			fmt.Fprintf(w, "data: %s\n\n", msg)
-			fl.Flush()
+			_, err = fmt.Fprintf(w, "data: %s\n\n", msg)
 		case <-ping.C:
-			fmt.Fprint(w, ": ping\n\n") // 끊긴 연결 감지용 keepalive
-			fl.Flush()
+			_, err = fmt.Fprint(w, ": ping\n\n") // keepalive 겸 끊긴 연결 감지
 		case <-r.Context().Done():
-			return // 브라우저가 떠남
+			return // 브라우저가 떠남 (net/http 경로)
 		}
+		if err != nil {
+			// 클라이언트 연결 종료. Wails(darwin) 경로는 request context 취소가 없어
+			// Write 에러가 유일한 종료 신호다 — 여기서 빠져나가 구독 채널을 정리한다.
+			return
+		}
+		flush()
 	}
 }
